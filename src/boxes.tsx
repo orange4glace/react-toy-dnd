@@ -542,7 +542,8 @@ function ClickedGizmo(props: ClickedGizmoProps) {
   return (
     <div style={{
       position: 'fixed',
-      border: '4px solid Tomato',
+      zIndex: '10',
+      border: '4px dashed Azure',
       boxSizing: 'border-box',
       pointerEvents: 'none',
       ...style

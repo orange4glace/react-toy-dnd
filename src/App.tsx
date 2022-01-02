@@ -6,22 +6,22 @@ function App() {
   const [boxes, setBoxes] = useState([
     {
       id: '0',
-      x: 50,
-      y: 150,
+      x: 470,
+      y: 350,
       width: 150,
       height: 150,
-      color: 'LightBlue'
+      color: 'DodgerBlue'
     }, {
       id: '1',
-      x: 150,
-      y: 350,
+      x: 650,
+      y: 470,
       width: 150,
       height: 200,
       color: 'MediumSeaGreen'
     }, {
       id: '2',
-      x: 550,
-      y: 150,
+      x: 650,
+      y: 290,
       width: 250,
       height: 150,
       color: 'MediumPurple'
@@ -53,7 +53,7 @@ function App() {
                     width: `${box.width}px`,
                     height: `${box.height}px`,
                     background: `${box.color}`,
-                    opacity: clicked ? '.7' : '.3',
+                    opacity: clicked ? '1' : '1',
                   }} {...renderProps}>
                   </div>
                 )}
