@@ -45,14 +45,14 @@ function App() {
           <>
             {boxes.map(box => (
               <Box key={box.id} id={box.id} {...renderProps}>
-                {(renderProps, clicked, collided, offset, innerRef) => (
+                {(renderProps, clicked, offset, innerRef) => (
                   <div ref={innerRef} style={{
                     position: 'absolute',
                     left: `${box.x + offset.x}px`,
                     top: `${box.y + offset.y}px`,
                     width: `${box.width}px`,
                     height: `${box.height}px`,
-                    background: collided ? 'crimson' : `${box.color}`,
+                    background: `${box.color}`,
                     opacity: clicked ? '.7' : '.3',
                   }} {...renderProps}>
                   </div>

@@ -14,24 +14,23 @@ const BOX_ID_ATTRIBUTE = 'box-id';
 const REDUX_CONTEXT: any = React.createContext(null);
 
 type ReduxState = {
-  clicked: string | undefined;
+  clicked: string[];
   moving: undefined | {
-    boxId: string;
+    boxId: string[];
     dx: number;
     dy: number;
-    rects: Map<string, DOMRect>;
-    collision: boolean;
   }
+  rects: Map<string, DOMRect>;
 }
 
 type ClickAction = {
   type: 'CLICK';
-  boxId: string;
+  boxId: string | string[] | undefined;
+  multiple: boolean;
 }
 type MoveStartAction = {
   type: 'MOVE_START';
-  boxId: string;
-  rects: Map<string, DOMRect>;
+  boxId: string[];
 }
 type MoveAction = {
   type: 'MOVE';
@@ -41,22 +40,35 @@ type MoveAction = {
 type MoveEndAction = {
   type: 'MOVE_END';
 }
-type SetCollisionStateAction = {
-  type: 'SET_COLLISION_STATE',
-  collision: boolean
+type PublishRectMapAction = {
+  type: 'PUBLISH_RECT_MAP',
 }
-type ReduxAction = ClickAction | MoveStartAction | MoveAction | MoveEndAction | SetCollisionStateAction;
+type SetRectMapAction = {
+  type: 'SET_RECT_MAP',
+  rects: Map<string, DOMRect>;
+}
+type ReduxAction = ClickAction | MoveStartAction | MoveAction | MoveEndAction | PublishRectMapAction | SetRectMapAction;
 type ReduxStore = Store<ReduxState, ReduxAction>;
 
 const ReduxReducer: any = (state: ReduxState = {
-  clicked: undefined,
-  moving: undefined
+  clicked: [],
+  moving: undefined,
+  rects: new Map()
 }, action: ReduxAction): ReduxState => {
   if (action.type === 'CLICK') {
-    const boxId = action.boxId;
+    const boxId = action.boxId === undefined ? [] : Array.isArray(action.boxId) ? action.boxId : [action.boxId];
+    let hasAll = boxId.length > 0;
+    for (const id of boxId) {
+      hasAll = hasAll && state.clicked.indexOf(id) !== -1;
+    }
+    const nextClicked = (action.multiple || hasAll) ? [...state.clicked] : [];
+    for (const id of boxId) {
+      if (boxId && nextClicked.indexOf(id) !== -1) continue;
+      nextClicked.push(id);
+    }
     return {
       ...state,
-      clicked: boxId
+      clicked: nextClicked
     }
   }
   if (action.type === 'MOVE_START') {
@@ -67,8 +79,6 @@ const ReduxReducer: any = (state: ReduxState = {
         boxId,
         dx: 0,
         dy: 0,
-        rects: action.rects,
-        collision: false
       }
     }
   }
@@ -88,59 +98,43 @@ const ReduxReducer: any = (state: ReduxState = {
       moving: undefined
     }
   }
-  if (action.type === 'SET_COLLISION_STATE') {
-    if (state.moving === undefined) return state;
+  if (action.type === 'SET_RECT_MAP') {
     return {
       ...state,
-      moving: {
-        ...state.moving,
-        collision: action.collision
-      }
+      rects: action.rects
     }
   }
   return state;
 };
 
-function collisionCheck(rect1: DOMRect, rect2: DOMRect, offsetX: number, offsetY: number) {
+function checkCollision(rect1: DOMRect, rect2: DOMRect, offsetX: number, offsetY: number) {
   return (rect1.x + offsetX < rect2.x + rect2.width &&
     rect1.x + offsetX + rect1.width > rect2.x &&
     rect1.y + offsetY < rect2.y + rect2.height &&
     rect1.height + rect1.y + offsetY > rect2.y)
 }
-function collisionCheckerMiddleware(): any {
+
+function rectMapPublisherMiddleware(registry: BoxRegistry): any {
   return (store: ReduxStore) => (next: Dispatch) => (action: ReduxAction) => {
-    if (action.type === 'MOVE_START' || action.type === 'MOVE') {
-      next(action);
-      const state = store.getState();
-      if (!state.moving) {
-        throw new Error('Should be in moving state');
-      }
-      const rects = state.moving.rects;
-      const movingRect = state.moving.rects.get(state.moving.boxId);
-      const offsetX = state.moving.dx;
-      const offsetY = state.moving.dy;
-      if (!movingRect) return;
-      for (const [id, rect] of rects.entries()) {
-        if (!rect) continue;
-        if (id === state.moving.boxId) continue;
-        if (collisionCheck(movingRect, rect, offsetX, offsetY)) {
-          store.dispatch({
-            type: 'SET_COLLISION_STATE',
-            collision: true
-          });
-          return;
-        }
+    if (action.type === 'PUBLISH_RECT_MAP') {
+      const rects = new Map<string, DOMRect>();
+      const boxes = registry.getAll();
+      for (const box of boxes) {
+        const el = box.getRef();
+        if (!el) continue;
+        rects.set(box.id, el.getBoundingClientRect());
       }
       store.dispatch({
-        type: 'SET_COLLISION_STATE',
-        collision: false
+        type: 'SET_RECT_MAP',
+        rects
       });
-    }
-    else {
       next(action);
     }
+    next(action);
   }
 }
+
+
 
 type Responder = {
   onMove?: (id: string, dx: number, dy: number) => void;
@@ -153,12 +147,16 @@ function responderMiddleware(getResponder: () => Responder): any {
       next(action);
       const state = store.getState();
       if (!state.moving) return;
-      responder.onMove?.(state.moving.boxId, state.moving.dx, state.moving.dy);
+      for (const boxId of state.moving.boxId) {
+        responder.onMove?.(boxId, state.moving.dx, state.moving.dy);
+      }
     }
     if (action.type === 'MOVE_END') {
       const state = store.getState();
       if (!state.moving) return;
-      responder.onMoveEnd?.(state.moving.boxId, state.moving.dx, state.moving.dy);
+      for (const boxId of state.moving.boxId) {
+        responder.onMoveEnd?.(boxId, state.moving.dx, state.moving.dy);
+      }
       next(action);
     }
     else {
@@ -206,12 +204,18 @@ function useClick(store: ReduxStore) {
     // If so, get the ID of box
     const closestBox = target.closest(`[${BOX_ID_ATTRIBUTE}]`);
     if (!closestBox) {
+      store.dispatch({
+        type: 'CLICK',
+        boxId: undefined,
+        multiple: false,
+      });
       return;
     }
     const boxId = closestBox.getAttribute(BOX_ID_ATTRIBUTE)!;
     store.dispatch({
       type: 'CLICK',
-      boxId
+      boxId,
+      multiple: e.shiftKey,
     });
   }, [store]);
 
@@ -245,20 +249,11 @@ function useTranslate(store: ReduxStore, registry: BoxRegistry) {
     isDragging.current = true;
     dragStartOffset.current = [e.clientX, e.clientY];
 
-    const rects = new Map<string, DOMRect>();
-    const boxes = registry.getAll();
-    for (const box of boxes) {
-      const el = box.getRef();
-      if (!el) continue;
-      rects.set(box.id, el.getBoundingClientRect());
-    }
-
     store.dispatch({
       type: 'MOVE_START',
-      boxId,
-      rects
+      boxId: store.getState().clicked,
     });
-  }, [store, registry]);
+  }, [store]);
 
   const mousemove = useMemo(() => (e: MouseEvent) => {
     if (!isDragging.current) return;
@@ -316,9 +311,9 @@ export function Boxes(props: BoxesProps) {
 
   const boxRegistry = useMemo(() => createBoxRegistry(), []);
   const middlewares: any = useMemo(() => applyMiddleware(
-    collisionCheckerMiddleware(),
-    responderMiddleware(getResponder)
-  ), [getResponder])
+    responderMiddleware(getResponder),
+    rectMapPublisherMiddleware(boxRegistry),
+  ), [getResponder, boxRegistry])
   const store: Store<ReduxState, ReduxAction> = useMemo(() => createStore(ReduxReducer, middlewares), [middlewares]);
 
   useClick(store);
@@ -330,11 +325,99 @@ export function Boxes(props: BoxesProps) {
 
   return (
     <Provider store={store} context={REDUX_CONTEXT}>
+      <BoxRangeSelector store={store}/>
       {children(renderProps)}
     </Provider>
   )
 }
 
+
+
+function useBoxRangeSelector(store: ReduxStore): [boolean, {x: number, y: number, w: number, h: number}] {
+  const originMousePositionRef = useRef({x: 0, y: 0});
+  const stateRef = useRef('IDLE');
+
+  const [active, setActive] = useState(false);
+  const [rect, setRect] = useState({x: 0, y: 0, w: 0, h: 0});
+
+  const mousemove = useMemo(() => (e: MouseEvent) => {
+    if (stateRef.current !== 'MOVE') return;
+    const x1 = Math.min(originMousePositionRef.current.x, e.clientX);
+    const x2 = Math.max(originMousePositionRef.current.x, e.clientX);
+    const y1 = Math.min(originMousePositionRef.current.y, e.clientY);
+    const y2 = Math.max(originMousePositionRef.current.y, e.clientY);
+
+    setRect({x: x1, y: y1, w: x2 - x1, h: y2 - y1});
+    
+    const rect1 = new DOMRect(x1, y1, x2 - x1, y2 - y1);
+    const rects = store.getState().rects;
+    const clicked: string[] = [];
+    for (const [id, rect2] of rects) {
+      if (checkCollision(rect1, rect2, 0, 0)) {
+        clicked.push(id);
+      }
+    }
+    store.dispatch({
+      type: 'CLICK',
+      boxId: clicked,
+      multiple: false
+    });
+  }, [store]);
+  const mouseup = useMemo(() => (e: MouseEvent) => {
+    stateRef.current = 'IDLE';
+    setActive(false);
+  }, []);
+  const mousedown = useMemo(() => (e: MouseEvent) => {
+    if (stateRef.current !== 'IDLE') return;
+
+    const target = e.target as HTMLElement;
+    // Check if target is box,
+    // If so, get the ID of box
+    const closestBox = target.closest(`[${BOX_ID_ATTRIBUTE}]`);
+    if (closestBox) return;
+
+    originMousePositionRef.current = {x: e.clientX, y: e.clientY};
+    stateRef.current = 'MOVE';
+
+    setActive(true);
+    setRect({x: 0, y: 0, w: 0, h: 0});
+    store.dispatch({
+      type: 'PUBLISH_RECT_MAP'
+    });
+
+    window.addEventListener('mousemove', mousemove);
+    window.addEventListener('mouseup', mousemove);
+    window.addEventListener('mouseup', mouseup);
+  }, [mousemove, mouseup, store]);
+
+  useLayoutEffect(() => {
+    window.addEventListener('mousedown', mousedown);
+    return () => window.removeEventListener('mousedown', mousedown);
+  }, [mousedown]);
+
+  return [active, rect];
+}
+type BoxRangeSelectorType = {
+  store: ReduxStore
+}
+function BoxRangeSelector(props: BoxRangeSelectorType) {
+  const {store} = props;
+
+  const [active, rect] = useBoxRangeSelector(store);
+
+  return active ?
+    <div style={{
+      position: 'fixed',
+      pointerEvents: 'none',
+      opacity: '.3',
+      background: 'RosyBrown',
+      left: rect.x,
+      top: rect.y,
+      width: rect.w,
+      height: rect.h
+    }}/> :
+    <></>
+}
 
 
 function useBoxPublisher(id: string, registry: BoxRegistry, getRef: () => HTMLElement | null) {
@@ -356,16 +439,15 @@ type BoxContentRenderProps = {
 type BoxProps = {
   id: string;
   registry: BoxRegistry;
-  children: (renderProps: BoxContentRenderProps, clicked: boolean, collided: boolean, offset: {x: number, y: number}, innerRef: (el: HTMLElement | null) => void) => ReactElement;
+  children: (renderProps: BoxContentRenderProps, clicked: boolean, offset: {x: number, y: number}, innerRef: (el: HTMLElement | null) => void) => ReactElement;
 }
 type BoxMappedProps = {
   clicked: boolean;
-  collided: boolean;
   dx: number;
   dy: number;
 }
 function _Box(props: BoxProps & BoxMappedProps) {
-  const {id, registry, clicked, collided, dx, dy, children} = props;
+  const {id, registry, clicked, dx, dy, children} = props;
 
   const ref = useRef<HTMLElement | null>(null);
   const setRef = useCallback((el: HTMLElement | null) => {
@@ -385,7 +467,7 @@ function _Box(props: BoxProps & BoxMappedProps) {
 
   return (
     <>
-      {children(renderProps, clicked, collided, offset, setRef)}
+      {children(renderProps, clicked, offset, setRef)}
       {clicked && <ClickedGizmo getRef={getRef}/>}
     </>
   )
@@ -394,17 +476,16 @@ function _Box(props: BoxProps & BoxMappedProps) {
 export const Box = connect(
   (state: ReduxState, props: BoxProps) => {
     const boxId = props.id;
-    const clicked = state.clicked === boxId;
-    const collided = !!(clicked && state.moving?.collision);
+    const clicked = state.clicked.indexOf(boxId) !== -1;
 
     let dx = 0, dy = 0;
-    if (state.moving?.boxId === boxId) {
-      dx = state.moving.dx;
-      dy = state.moving.dy;
+    if (state.moving?.boxId.indexOf(boxId) !== -1) {
+      dx = state.moving?.dx || 0;
+      dy = state.moving?.dy || 0;
     }
 
     return {
-      clicked, collided, dx, dy
+      clicked, dx, dy
     };
   },
   undefined,
@@ -413,6 +494,10 @@ export const Box = connect(
     context: REDUX_CONTEXT
   }
 )(_Box);
+
+
+
+
 
 function useRAF(cb: () => void) {
   const rafIdRef = useRef(0);
