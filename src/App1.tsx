@@ -1,6 +1,6 @@
 import './App.css';
 import { useEffect, useState } from 'react';
-import { Boxes, Box } from './boxes';
+import { Boxes, Box } from './step-by-step/boxes1';
 
 function App() {
   const [boxes, setBoxes] = useState([
@@ -38,25 +38,28 @@ function App() {
 
   return (
     <div className="App">
-      <Boxes
-        onMove={(id: string, dx: number, dy: number) => console.log(`Move ${id}, x: ${dx}, y: ${dy}`)}
-        onMoveEnd={(id: string, dx: number, dy: number) => update(id, dx, dy)}>
+      <Boxes>
         {(renderProps) => (
           <>
             {boxes.map(box => (
               <Box key={box.id} id={box.id} {...renderProps}>
-                {(renderProps, clicked, offset, innerRef) => (
-                  <div ref={innerRef} style={{
-                    position: 'absolute',
-                    left: `${box.x + offset.x}px`,
-                    top: `${box.y + offset.y}px`,
-                    width: `${box.width}px`,
-                    height: `${box.height}px`,
-                    background: `${box.color}`,
-                    opacity: clicked ? '1' : '1',
-                  }} {...renderProps}>
-                  </div>
-                )}
+                <div style={{
+                  position: 'absolute',
+                  left: `${box.x}px`,
+                  top: `${box.y}px`,
+                  width: `${box.width}px`,
+                  height: `${box.height}px`,
+                  background: `${box.color}`,
+                  opacity: '1',
+
+                  userSelect: 'none',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: 'white',
+                }}>
+                  <span>HELLO WORLD</span>
+                </div>
               </Box>
             ))}
           </>
